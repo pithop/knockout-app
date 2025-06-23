@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
 import {
     getAuth,
@@ -25,11 +25,13 @@ import {
     orderBy,
     arrayUnion,
     arrayRemove,
-    where
+    where,
+    writeBatch
 } from 'firebase/firestore';
 import { motion, AnimatePresence } from 'framer-motion';
+import toast, { Toaster } from 'react-hot-toast';
 import {
-    Swords, Gamepad2, Crown, UserPlus, BarChart2, LogOut, XCircle, Heart, MessageSquare, Share2, SkipBack, CircleUserRound, MailCheck, ShieldCheck, Trash2, PlusCircle
+    Swords, Gamepad2, Crown, UserPlus, BarChart2, LogOut, XCircle, Heart, MessageSquare, Share2, SkipBack, CircleUserRound, MailCheck, ShieldCheck, Trash2, PlusCircle, Bell, Send
 } from 'lucide-react';
 
 // --- Firebase Configuration ---
@@ -59,6 +61,7 @@ export default function App() {
     const [page, setPage] = useState('feed');
     const [showAuthModal, setShowAuthModal] = useState(false);
     const [showVerificationMessage, setShowVerificationMessage] = useState(false);
+    const [activeChat, setActiveChat] = useState(null); // { matchId, opponent }
 
     const isAdmin = useMemo(() => user && ADMIN_UIDS.includes(user.uid), [user]);
 
@@ -133,11 +136,17 @@ export default function App() {
     const renderPage = () => {
         if (!user || !profile) return <LoadingScreen />;
 
+        if (activeChat) {
+            return <ChatScreen match={activeChat} user={user} onClose={() => setActiveChat(null)} />;
+        }
+
         switch (page) {
             case 'feed':
                 return <FightFeed user={user} profile={profile} setShowAuthModal={setShowAuthModal} />;
             case 'matchmaking':
-                return user.isAnonymous ? <AuthWall setShowAuthModal={setShowAuthModal} feature="matchmaking" /> : <Matchmaking user={user} />;
+                return user.isAnonymous ? <AuthWall setShowAuthModal={setShowAuthModal} feature="matchmaking" /> : <Matchmaking user={user} profile={profile} />;
+            case 'challenges':
+                return user.isAnonymous ? <AuthWall setShowAuthModal={setShowAuthModal} feature="challenges" /> : <ChallengesPage user={user} setActiveChat={setActiveChat} />;
             case 'leaderboard':
                 return <Leaderboard />;
             case 'profile':
@@ -153,20 +162,39 @@ export default function App() {
 
     return (
         <div className="h-screen bg-black text-white font-sans flex flex-col">
+            <Toaster toastOptions={{
+                style: {
+                    background: '#333',
+                    color: '#fff',
+                },
+            }}/>
             <main className="flex-1 overflow-y-hidden">
                 {renderPage()}
             </main>
-            <BottomNav page={page} setPage={setPage} isAdmin={isAdmin} />
+            {!activeChat && <BottomNav page={page} setPage={setPage} isAdmin={isAdmin} user={user} />}
             {showAuthModal && <AuthModal setShowModal={setShowAuthModal} setShowVerificationMessage={setShowVerificationMessage} showVerificationMessage={showVerificationMessage} />}
         </div>
     );
 }
 
 // --- Navigation ---
-function BottomNav({ page, setPage, isAdmin }) {
+function BottomNav({ page, setPage, isAdmin, user }) {
+    const [challengeCount, setChallengeCount] = useState(0);
+
+    useEffect(() => {
+        if (!user || user.isAnonymous) return;
+        const challengesRef = collection(db, 'challenges');
+        const q = query(challengesRef, where('to', '==', user.uid), where('status', '==', 'pending'));
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            setChallengeCount(snapshot.size);
+        });
+        return () => unsubscribe();
+    }, [user]);
+
     const navItems = [
         { name: 'feed', icon: Gamepad2, label: 'Feed' },
         { name: 'matchmaking', icon: Swords, label: 'Match' },
+        { name: 'challenges', icon: Bell, label: 'Challenges', notificationCount: challengeCount },
         { name: 'leaderboard', icon: BarChart2, label: 'Ranks' },
         { name: 'profile', icon: CircleUserRound, label: 'Profile' },
     ];
@@ -178,16 +206,21 @@ function BottomNav({ page, setPage, isAdmin }) {
     return (
         <nav className="bg-black/80 backdrop-blur-sm border-t border-gray-800 flex justify-around items-center h-16 sm:h-20 flex-shrink-0 z-30">
             {navItems.map(item => (
-                 <button key={item.name} onClick={() => setPage(item.name)} className={`flex flex-col items-center justify-center h-full w-full transition-colors duration-200 ${page === item.name ? 'text-red-500' : 'text-gray-400 hover:text-white'}`}>
+                 <button key={item.name} onClick={() => setPage(item.name)} className={`relative flex flex-col items-center justify-center h-full w-full transition-colors duration-200 ${page === item.name ? 'text-red-500' : 'text-gray-400 hover:text-white'}`}>
                     <item.icon className="h-6 w-6 sm:h-7 sm:w-7 mb-1" />
                     <span className="text-xs sm:text-sm">{item.label}</span>
+                    {item.notificationCount > 0 && (
+                        <span className="absolute top-1 right-1/4 -translate-y-1/2 translate-x-1/2 bg-red-600 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">
+                            {item.notificationCount}
+                        </span>
+                    )}
                  </button>
             ))}
         </nav>
     );
 }
 
-// --- Auth Components ---
+// --- Auth Components (Largely unchanged) ---
 function AuthModal({ setShowModal, setShowVerificationMessage, showVerificationMessage }) {
     const [authPage, setAuthPage] = useState('login');
 
@@ -384,8 +417,16 @@ function CommentModal({ postId, setShowCommentModal }) {
     const [comments, setComments] = useState([]);
     const [newComment, setNewComment] = useState('');
     const [loading, setLoading] = useState(true);
+    const [profile, setProfile] = useState(null);
 
     useEffect(() => {
+        const user = auth.currentUser;
+        if (user) {
+            getDoc(doc(db, `artifacts/${appId}/users`, user.uid)).then(snap => {
+                if (snap.exists()) setProfile(snap.data());
+            })
+        }
+
         const commentsCol = collection(db, `artifacts/${appId}/public/data/feed/${postId}/comments`);
         const q = query(commentsCol, orderBy('createdAt', 'asc'));
         const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -397,21 +438,17 @@ function CommentModal({ postId, setShowCommentModal }) {
 
     const handleAddComment = async (e) => {
         e.preventDefault();
-        if (!newComment.trim()) return;
+        if (!newComment.trim() || !profile) return;
 
         const user = auth.currentUser;
-        if (!user || user.isAnonymous) return; // Guests can't comment
+        if (!user || user.isAnonymous) return;
 
         const commentsCol = collection(db, `artifacts/${appId}/public/data/feed/${postId}/comments`);
-        const userProfileRef = doc(db, `artifacts/${appId}/users`, user.uid);
-        const userProfileSnap = await getDoc(userProfileRef);
-        const userProfile = userProfileSnap.data();
-
         await addDoc(commentsCol, {
             text: newComment,
             userId: user.uid,
-            username: userProfile.username,
-            avatar: userProfile.avatar,
+            username: profile.username,
+            avatar: profile.avatar,
             createdAt: serverTimestamp()
         });
 
@@ -495,7 +532,7 @@ function FightFeed({ user, profile, setShowAuthModal }) {
     };
     
     const handleLike = async (postId, currentLikes) => {
-        if (user.isAnonymous) {
+        if (!user || user.isAnonymous) {
             setShowAuthModal(true);
             return;
         }
@@ -559,7 +596,7 @@ function FightFeed({ user, profile, setShowAuthModal }) {
     );
 }
 
-function Matchmaking({ user }) {
+function Matchmaking({ user, profile }) {
     const [challengers, setChallengers] = useState([]);
     const [loading, setLoading] = useState(true);
 
@@ -582,8 +619,18 @@ function Matchmaking({ user }) {
         fetchChallengers();
     }, [fetchChallengers]);
 
-    const handleSwipe = (id) => {
-        setChallengers(prev => prev.filter(c => c.id !== id));
+    const handleSwipe = async (challengedUser, liked) => {
+        if (liked) {
+            toast.success(`You challenged ${challengedUser.username}!`);
+            const challengeRef = collection(db, 'challenges');
+            await addDoc(challengeRef, {
+                from: { uid: user.uid, username: profile.username, avatar: profile.avatar },
+                to: { uid: challengedUser.id, username: challengedUser.username, avatar: challengedUser.avatar },
+                status: 'pending',
+                createdAt: serverTimestamp()
+            });
+        }
+        setChallengers(prev => prev.filter(c => c.id !== challengedUser.id));
     };
     
     if (loading) return <div className="h-full flex items-center justify-center"><p>Searching for eSports challengers...</p></div>;
@@ -593,22 +640,24 @@ function Matchmaking({ user }) {
              <div className="relative w-full max-w-sm h-[75vh] max-h-[600px]">
                 {challengers.length > 0 ? (
                     <AnimatePresence>
-                        {challengers.map((challenger, index) => {
-                            if (index !== 0) return null; // Only render the top card
+                        {challengers.slice(0, 3).reverse().map((challenger, index) => {
+                            const isTopCard = index === challengers.slice(0, 3).length - 1;
                             return (
                                  <motion.div
                                     key={challenger.id}
                                     className="absolute w-full h-full bg-gray-800 rounded-2xl shadow-2xl border border-gray-700 overflow-hidden flex flex-col"
-                                    style={{ zIndex: challengers.length - index }}
-                                    initial={{ scale: 0.8, y: -20, opacity: 0 }}
+                                    style={{ zIndex: index }}
+                                    initial={{ scale: 1 - (challengers.length - 1 - index) * 0.05, y: (challengers.length - 1 - index) * -10, opacity: 1}}
                                     animate={{ scale: 1, y: 0, opacity: 1 }}
-                                    exit={{ x: 300, opacity: 0, transition: {duration: 0.2} }}
+                                    exit={{ x: 300, opacity: 0, transition: {duration: 0.3} }}
                                     transition={{ duration: 0.3 }}
                                     drag="x"
                                     dragConstraints={{ left: 0, right: 0, top: 0, bottom: 0 }}
                                     onDragEnd={(event, info) => {
-                                        if (Math.abs(info.offset.x) > 100) {
-                                            handleSwipe(challenger.id);
+                                        if (info.offset.x > 100) {
+                                            handleSwipe(challenger, true); // Like
+                                        } else if (info.offset.x < -100) {
+                                            handleSwipe(challenger, false); // Dislike
                                         }
                                     }}
                                 >
@@ -622,10 +671,12 @@ function Matchmaking({ user }) {
                                             {challenger.games && challenger.games.slice(0, 3).map(game => <span key={game} className="bg-gray-700 text-xs px-2 py-1 rounded-full">{game}</span>)}
                                         </div>
                                         </div>
-                                        <div className="flex justify-around items-center w-full p-4">
-                                            <button onClick={() => handleSwipe(challenger.id)} className="w-16 h-16 rounded-full bg-black/50 border-2 border-red-500 text-red-500 flex items-center justify-center transition-transform hover:scale-110"><XCircle className="w-8 h-8"/></button>
-                                            <button onClick={() => handleSwipe(challenger.id)} className="w-16 h-16 rounded-full bg-black/50 border-2 border-green-500 text-green-500 flex items-center justify-center transition-transform hover:scale-110"><Heart className="w-8 h-8"/></button>
-                                        </div>
+                                         {isTopCard && (
+                                            <div className="flex justify-around items-center w-full p-4">
+                                                <button onClick={() => handleSwipe(challenger, false)} className="w-16 h-16 rounded-full bg-black/50 border-2 border-red-500 text-red-500 flex items-center justify-center transition-transform hover:scale-110"><XCircle className="w-8 h-8"/></button>
+                                                <button onClick={() => handleSwipe(challenger, true)} className="w-16 h-16 rounded-full bg-black/50 border-2 border-green-500 text-green-500 flex items-center justify-center transition-transform hover:scale-110"><Heart className="w-8 h-8"/></button>
+                                            </div>
+                                        )}
                                    </div>
                                 </motion.div>
                             )
@@ -710,9 +761,13 @@ function Profile({ user, profile, setProfile, handleLogout }) {
         await updateDoc(profileRef, {
             username: editData.username,
             bio: editData.bio,
+            onlineId: editData.onlineId,
+            twitch: editData.twitch,
+            youtube: editData.youtube
         });
         setProfile(prev => ({...prev, ...editData}));
         setIsEditing(false);
+        toast.success('Profile updated!');
     };
 
     const winRate = useMemo(() => {
@@ -750,6 +805,24 @@ function Profile({ user, profile, setProfile, handleLogout }) {
                     {isEditing ? <textarea value={editData.bio} onChange={e => setEditData({...editData, bio: e.target.value})} className="w-full bg-gray-700 p-3 rounded-lg h-24 text-sm text-white"/>
                                : <p className="text-gray-300 bg-gray-900/50 p-3 rounded-lg text-sm">{profile.bio}</p> }
                 </div>
+
+                 <div className="space-y-4 my-8">
+                    <h3 className="text-lg font-semibold mb-2">Gamer Profiles</h3>
+                    {isEditing ? (
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                             <input type="text" placeholder="PSN/Xbox ID" value={editData.onlineId || ''} onChange={e => setEditData({...editData, onlineId: e.target.value})} className="bg-gray-700 p-2 rounded-lg text-white"/>
+                             <input type="text" placeholder="Twitch Username" value={editData.twitch || ''} onChange={e => setEditData({...editData, twitch: e.target.value})} className="bg-gray-700 p-2 rounded-lg text-white"/>
+                             <input type="text" placeholder="YouTube Handle" value={editData.youtube || ''} onChange={e => setEditData({...editData, youtube: e.target.value})} className="bg-gray-700 p-2 rounded-lg text-white"/>
+                        </div>
+                    ) : (
+                        <div className="flex flex-wrap gap-4">
+                            {profile.onlineId && <p><strong className="text-gray-400">Gamer ID:</strong> {profile.onlineId}</p>}
+                             {profile.twitch && <a href={`https://twitch.tv/${profile.twitch}`} target="_blank" rel="noopener noreferrer" className="text-purple-400 hover:underline">Twitch</a>}
+                             {profile.youtube && <a href={`https://youtube.com/${profile.youtube}`} target="_blank" rel="noopener noreferrer" className="text-red-500 hover:underline">YouTube</a>}
+                        </div>
+                    )}
+                </div>
+
 
                 <div>
                      <h3 className="text-lg font-semibold mb-4">Your Posts</h3>
@@ -795,13 +868,11 @@ function AdminPanel() {
                 // You would trigger a Cloud Function that verifies admin privileges before deleting.
                 const userDocRef = doc(db, `artifacts/${appId}/users`, userIdToDelete);
                 await deleteDoc(userDocRef);
-
-                alert(`User ${userIdToDelete} data deleted. You must still delete their Auth record from the Firebase Console.`);
-                
+                toast.success(`User ${userIdToDelete} data deleted.`);
                 fetchUsers();
             } catch (error) {
                 console.error("Error deleting user:", error);
-                alert("Failed to delete user data.");
+                toast.error("Failed to delete user data.");
             }
         }
     };
@@ -830,6 +901,173 @@ function AdminPanel() {
     );
 }
 
+// --- Challenges & Chat Components ---
+
+function ChallengesPage({ user, setActiveChat }) {
+    const [incoming, setIncoming] = useState([]);
+    const [matches, setMatches] = useState([]);
+    const [view, setView] = useState('challenges'); // challenges, matches
+
+    useEffect(() => {
+        const challengesRef = collection(db, 'challenges');
+        const q = query(challengesRef, where('to.uid', '==', user.uid), where('status', '==', 'pending'));
+        const unsubscribe = onSnapshot(q, snapshot => {
+            setIncoming(snapshot.docs.map(doc => ({id: doc.id, ...doc.data()})));
+        });
+        return unsubscribe;
+    }, [user.uid]);
+
+    useEffect(() => {
+        const matchesRef = collection(db, 'matches');
+        const q = query(matchesRef, where('users', 'array-contains', user.uid));
+        const unsubscribe = onSnapshot(q, snapshot => {
+            const loadedMatches = snapshot.docs.map(doc => ({id: doc.id, ...doc.data()}));
+            setMatches(loadedMatches);
+        });
+        return unsubscribe;
+    }, [user.uid]);
+
+    const handleAccept = async (challenge) => {
+        const batch = writeBatch(db);
+
+        // Create a new match document
+        const matchRef = doc(collection(db, 'matches'));
+        batch.set(matchRef, {
+            users: [challenge.from.uid, challenge.to.uid],
+            userDetails: [challenge.from, challenge.to],
+            createdAt: serverTimestamp(),
+            lastMessage: 'Match accepted! Say hello.'
+        });
+
+        // Delete the challenge document
+        const challengeRef = doc(db, 'challenges', challenge.id);
+        batch.delete(challengeRef);
+
+        await batch.commit();
+        toast.success(`Match accepted with ${challenge.from.username}!`);
+    };
+
+    const handleDecline = async (challengeId) => {
+        await deleteDoc(doc(db, 'challenges', challengeId));
+        toast.error('Challenge declined.');
+    };
+
+    return (
+        <div className="p-4 pt-8 h-full overflow-y-auto">
+            <div className="flex border-b border-gray-700 mb-4">
+                <button onClick={() => setView('challenges')} className={`py-2 px-4 font-bold ${view === 'challenges' ? 'text-red-500 border-b-2 border-red-500' : 'text-gray-400'}`}>Incoming Challenges</button>
+                <button onClick={() => setView('matches')} className={`py-2 px-4 font-bold ${view === 'matches' ? 'text-red-500 border-b-2 border-red-500' : 'text-gray-400'}`}>Matches</button>
+            </div>
+
+            {view === 'challenges' && (
+                <div className="space-y-3">
+                    {incoming.length === 0 && <p className="text-center text-gray-500 mt-8">No new challenges.</p>}
+                    {incoming.map(challenge => (
+                        <div key={challenge.id} className="bg-gray-800 p-4 rounded-lg flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                                <img src={challenge.from.avatar} alt={challenge.from.username} className="w-12 h-12 rounded-full"/>
+                                <p><span className="font-bold">{challenge.from.username}</span> challenged you!</p>
+                            </div>
+                            <div className="flex gap-2">
+                                <button onClick={() => handleAccept(challenge)} className="bg-green-600 hover:bg-green-700 px-3 py-1 rounded text-sm font-bold">Accept</button>
+                                <button onClick={() => handleDecline(challenge.id)} className="bg-red-600 hover:bg-red-700 px-3 py-1 rounded text-sm font-bold">Decline</button>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            {view === 'matches' && (
+                 <div className="space-y-3">
+                    {matches.length === 0 && <p className="text-center text-gray-500 mt-8">You have no matches yet. Go challenge some players!</p>}
+                    {matches.map(match => {
+                        const opponent = match.userDetails.find(u => u.uid !== user.uid);
+                        return (
+                            <div key={match.id} onClick={() => setActiveChat({ matchId: match.id, opponent })} className="bg-gray-800 p-4 rounded-lg flex items-center gap-3 cursor-pointer hover:bg-gray-700">
+                                <img src={opponent.avatar} alt={opponent.username} className="w-12 h-12 rounded-full"/>
+                                <div>
+                                    <p className="font-bold">{opponent.username}</p>
+                                    <p className="text-sm text-gray-400 truncate">{match.lastMessage}</p>
+                                </div>
+                            </div>
+                        )
+                    })}
+                </div>
+            )}
+        </div>
+    );
+}
+
+function ChatScreen({ match, user, onClose }) {
+    const [messages, setMessages] = useState([]);
+    const [newMessage, setNewMessage] = useState('');
+    const messagesEndRef = useRef(null);
+
+    useEffect(() => {
+        const messagesCol = collection(db, `matches/${match.matchId}/messages`);
+        const q = query(messagesCol, orderBy('createdAt', 'asc'));
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            setMessages(snapshot.docs.map(doc => doc.data()));
+        });
+        return () => unsubscribe();
+    }, [match.matchId]);
+
+    useEffect(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, [messages]);
+
+    const handleSendMessage = async (e) => {
+        e.preventDefault();
+        if (!newMessage.trim()) return;
+
+        const messagesCol = collection(db, `matches/${match.matchId}/messages`);
+        await addDoc(messagesCol, {
+            text: newMessage,
+            senderId: user.uid,
+            createdAt: serverTimestamp()
+        });
+        
+        const matchRef = doc(db, 'matches', match.matchId);
+        await updateDoc(matchRef, {
+            lastMessage: newMessage,
+            lastMessageTimestamp: serverTimestamp()
+        });
+
+        setNewMessage('');
+    };
+
+    return (
+        <div className="h-full flex flex-col bg-gray-900">
+            <header className="bg-black/80 p-4 flex items-center gap-4 border-b border-gray-800 flex-shrink-0">
+                <button onClick={onClose} className="text-gray-400 hover:text-white">
+                    <XCircle />
+                </button>
+                <img src={match.opponent.avatar} alt={match.opponent.username} className="w-10 h-10 rounded-full" />
+                <h2 className="font-bold text-lg">{match.opponent.username}</h2>
+            </header>
+            <div className="flex-1 p-4 overflow-y-auto space-y-4">
+                {messages.map((msg, index) => (
+                    <div key={index} className={`flex gap-3 ${msg.senderId === user.uid ? 'justify-end' : 'justify-start'}`}>
+                       <div className={`max-w-xs md:max-w-md p-3 rounded-2xl ${msg.senderId === user.uid ? 'bg-red-600 rounded-br-none' : 'bg-gray-700 rounded-bl-none'}`}>
+                           <p>{msg.text}</p>
+                       </div>
+                    </div>
+                ))}
+                 <div ref={messagesEndRef} />
+            </div>
+             <form onSubmit={handleSendMessage} className="p-4 flex gap-2 border-t border-gray-800 flex-shrink-0">
+                <input 
+                    type="text"
+                    value={newMessage}
+                    onChange={e => setNewMessage(e.target.value)}
+                    placeholder="Type your message..."
+                    className="flex-1 p-3 bg-gray-800 rounded-lg border border-gray-700 focus:outline-none focus:ring-2 focus:ring-red-500"
+                />
+                <button type="submit" className="p-3 bg-red-600 hover:bg-red-700 rounded-lg font-bold"><Send /></button>
+            </form>
+        </div>
+    )
+}
 
 // --- Utility Components ---
 function LoadingScreen() {
