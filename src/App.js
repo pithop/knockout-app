@@ -26,32 +26,38 @@ import {
     arrayUnion,
     arrayRemove,
     where,
-    writeBatch
+    writeBatch,
+    Timestamp
 } from 'firebase/firestore';
+import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
 import { motion, AnimatePresence } from 'framer-motion';
 import toast, { Toaster } from 'react-hot-toast';
+import { formatDistanceToNow } from 'date-fns';
 import {
-    Swords, Gamepad2, Crown, UserPlus, BarChart2, LogOut, XCircle, Heart, MessageSquare, Share2, SkipBack, CircleUserRound, MailCheck, ShieldCheck, Trash2, PlusCircle, Bell, Send
+    Swords, Gamepad2, Crown, UserPlus, LogOut, XCircle, Heart, MessageSquare, Share2, SkipBack, CircleUserRound, MailCheck, ShieldCheck, Trash2, PlusCircle, Bell, Send, Users, Video, Phone, Image as ImageIcon
 } from 'lucide-react';
+
+
 
 // --- Firebase Configuration ---
 // IMPORTANT: For security, it's best practice to use environment variables for Firebase config.
 const firebaseConfig = {
-    apiKey: "AIzaSyCUTN7e8b7DUwGZcr5ffqdoGUwP5vg4yhk",
-    authDomain: "knockout-ca914.firebaseapp.com",
-    projectId: "knockout-ca914",
-    storageBucket: "knockout-ca914.firebasestorage.app",
-    messagingSenderId: "39484935684",
-    appId: "1:39484935684:web:0b5e6321494bf1ce142f51"
+    apiKey: "AIzaSyDN4B8t_TLVonCONQLX6pqpa5kSVWs39iU",
+  authDomain: "connectsphere-app.firebaseapp.com",
+  projectId: "connectsphere-app",
+  storageBucket: "connectsphere-app.firebasestorage.app",
+  messagingSenderId: "98950537255",
+  appId: "1:98950537255:web:dff29455472007207dee02",
+  measurementId: "G-3NX3L3D5X1"
 };
 
 const appId = typeof window !== 'undefined' && typeof window.__app_id !== 'undefined' ? window.__app_id : 'project-knockout-esports';
-const ADMIN_UIDS = ['2dLeJTXxuxMZsxXV30Lx8fSrJ733']; // Replace with your actual Firebase UID for admin access
+const ADMIN_UIDS = ['UgIZ03wrcSSeN3MkjPjEUKfm6BF2']; // Replace with your actual Firebase UID for admin access
 
-// --- Firebase Initialization ---
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
+const storage = getStorage(app);
 
 // --- Main App Component ---
 export default function App() {
@@ -61,11 +67,10 @@ export default function App() {
     const [page, setPage] = useState('feed');
     const [showAuthModal, setShowAuthModal] = useState(false);
     const [showVerificationMessage, setShowVerificationMessage] = useState(false);
-    const [activeChat, setActiveChat] = useState(null); // { matchId, opponent }
+    const [activeChat, setActiveChat] = useState(null);
 
     const isAdmin = useMemo(() => user && ADMIN_UIDS.includes(user.uid), [user]);
 
-    // --- Authentication State Listener ---
     useEffect(() => {
         const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
             setLoading(true);
@@ -79,12 +84,14 @@ export default function App() {
                     } else {
                          const newProfile = {
                             uid: currentUser.uid,
-                            username: `Fighter_${currentUser.uid.substring(0, 6)}`,
-                            games: ['Street Fighter 6', 'Mortal Kombat 1', 'Tekken 8'],
-                            wins: 0, losses: 0, threatScore: 1000, coins: 500,
-                            bio: 'New challenger looking for an online match!',
+                            username: `User_${currentUser.uid.substring(0, 6)}`,
+                            interests: ['Gaming', 'Movies', 'Music'],
+                            influence: 100,
+                            bio: 'Excited to connect!',
                             createdAt: serverTimestamp(),
-                            avatar: `https://api.dicebear.com/8.x/pixel-art/svg?seed=${currentUser.uid}`
+                            avatar: `https://api.dicebear.com/8.x/pixel-art/svg?seed=${currentUser.uid}`,
+                            friends: [],
+                            friendRequests: [],
                         };
                         await setDoc(profileRef, newProfile);
                         setProfile(newProfile);
@@ -100,7 +107,7 @@ export default function App() {
                 }
             } else if (currentUser && currentUser.isAnonymous) {
                  setUser(currentUser);
-                 setProfile({ username: 'Guest', isAnonymous: true, coins: 0, threatScore: 0, avatar: `https://api.dicebear.com/8.x/pixel-art/svg?seed=guest` });
+                 setProfile({ username: 'Guest', isAnonymous: true, influence: 0, avatar: `https://api.dicebear.com/8.x/pixel-art/svg?seed=guest` });
                  setShowVerificationMessage(false);
             } else {
                 try {
@@ -114,7 +121,6 @@ export default function App() {
         return () => unsubscribe();
     }, []);
 
-    // --- Profile Update Listener ---
     useEffect(() => {
         if (user && !user.isAnonymous) {
             const profileRef = doc(db, `artifacts/${appId}/users`, user.uid);
@@ -142,19 +148,19 @@ export default function App() {
 
         switch (page) {
             case 'feed':
-                return <FightFeed user={user} profile={profile} setShowAuthModal={setShowAuthModal} />;
-            case 'matchmaking':
-                return user.isAnonymous ? <AuthWall setShowAuthModal={setShowAuthModal} feature="matchmaking" /> : <Matchmaking user={user} profile={profile} />;
-            case 'challenges':
-                return user.isAnonymous ? <AuthWall setShowAuthModal={setShowAuthModal} feature="challenges" /> : <ChallengesPage user={user} setActiveChat={setActiveChat} />;
-            case 'leaderboard':
-                return <Leaderboard />;
+                return <FeedPage user={user} profile={profile} setShowAuthModal={setShowAuthModal} />;
+            case 'discover':
+                return user.isAnonymous ? <AuthWall setShowAuthModal={setShowAuthModal} feature="discovering new people" /> : <DiscoverPage user={user} profile={profile} />;
+            case 'alerts':
+                return user.isAnonymous ? <AuthWall setShowAuthModal={setShowAuthModal} feature="your alerts" /> : <AlertsPage user={user} profile={profile} setActiveChat={setActiveChat} />;
+            case 'groups':
+                return <GroupsPage user={user} profile={profile} setShowAuthModal={setShowAuthModal}/>;
             case 'profile':
                  return user.isAnonymous ? <AuthWall setShowAuthModal={setShowAuthModal} feature="your profile"/> : <Profile user={user} profile={profile} setProfile={setProfile} handleLogout={handleLogout}/>;
             case 'admin':
-                return isAdmin ? <AdminPanel /> : <FightFeed user={user} profile={profile} setShowAuthModal={setShowAuthModal} />;
+                return isAdmin ? <AdminPanel /> : <FeedPage user={user} profile={profile} setShowAuthModal={setShowAuthModal} />;
             default:
-                return <FightFeed user={user} profile={profile} setShowAuthModal={setShowAuthModal} />;
+                return <FeedPage user={user} profile={profile} setShowAuthModal={setShowAuthModal} />;
         }
     };
 
@@ -162,12 +168,7 @@ export default function App() {
 
     return (
         <div className="h-screen bg-black text-white font-sans flex flex-col">
-            <Toaster toastOptions={{
-                style: {
-                    background: '#333',
-                    color: '#fff',
-                },
-            }}/>
+            <Toaster toastOptions={{ style: { background: '#333', color: '#fff' } }}/>
             <main className="flex-1 overflow-y-hidden">
                 {renderPage()}
             </main>
@@ -179,23 +180,25 @@ export default function App() {
 
 // --- Navigation ---
 function BottomNav({ page, setPage, isAdmin, user }) {
-    const [challengeCount, setChallengeCount] = useState(0);
+    const [alertCount, setAlertCount] = useState(0);
 
     useEffect(() => {
         if (!user || user.isAnonymous) return;
-        const challengesRef = collection(db, 'challenges');
-        const q = query(challengesRef, where('to', '==', user.uid), where('status', '==', 'pending'));
-        const unsubscribe = onSnapshot(q, (snapshot) => {
-            setChallengeCount(snapshot.size);
+        const profileRef = doc(db, `artifacts/${appId}/users`, user.uid);
+        const unsubscribe = onSnapshot(profileRef, (doc) => {
+            if (doc.exists()) {
+                const data = doc.data();
+                setAlertCount(data.friendRequests?.length || 0);
+            }
         });
         return () => unsubscribe();
     }, [user]);
 
     const navItems = [
         { name: 'feed', icon: Gamepad2, label: 'Feed' },
-        { name: 'matchmaking', icon: Swords, label: 'Match' },
-        { name: 'challenges', icon: Bell, label: 'Challenges', notificationCount: challengeCount },
-        { name: 'leaderboard', icon: BarChart2, label: 'Ranks' },
+        { name: 'discover', icon: Swords, label: 'Discover' },
+        { name: 'groups', icon: Users, label: 'Groups' },
+        { name: 'alerts', icon: Bell, label: 'Alerts', notificationCount: alertCount },
         { name: 'profile', icon: CircleUserRound, label: 'Profile' },
     ];
 
@@ -206,7 +209,7 @@ function BottomNav({ page, setPage, isAdmin, user }) {
     return (
         <nav className="bg-black/80 backdrop-blur-sm border-t border-gray-800 flex justify-around items-center h-16 sm:h-20 flex-shrink-0 z-30">
             {navItems.map(item => (
-                 <button key={item.name} onClick={() => setPage(item.name)} className={`relative flex flex-col items-center justify-center h-full w-full transition-colors duration-200 ${page === item.name ? 'text-red-500' : 'text-gray-400 hover:text-white'}`}>
+                 <button key={item.name} onClick={() => setPage(item.name)} className={`relative flex flex-col items-center justify-center h-full w-full transition-colors duration-200 ${page === item.name ? 'text-blue-500' : 'text-gray-400 hover:text-white'}`}>
                     <item.icon className="h-6 w-6 sm:h-7 sm:w-7 mb-1" />
                     <span className="text-xs sm:text-sm">{item.label}</span>
                     {item.notificationCount > 0 && (
@@ -220,7 +223,8 @@ function BottomNav({ page, setPage, isAdmin, user }) {
     );
 }
 
-// --- Auth Components (Largely unchanged) ---
+
+// --- Auth Components ---
 function AuthModal({ setShowModal, setShowVerificationMessage, showVerificationMessage }) {
     const [authPage, setAuthPage] = useState('login');
 
@@ -231,7 +235,7 @@ function AuthModal({ setShowModal, setShowVerificationMessage, showVerificationM
                     <MailCheck className="w-16 h-16 text-green-500 mx-auto mb-4" />
                     <h2 className="text-2xl font-bold mb-2 text-white">Verify Your Email</h2>
                     <p className="text-gray-400 mb-6">A verification link has been sent to your email address. Please click the link to continue.</p>
-                    <button onClick={() => { setShowModal(false); setShowVerificationMessage(false); }} className="w-full p-3 bg-red-600 hover:bg-red-700 rounded-lg font-bold">Close</button>
+                    <button onClick={() => { setShowModal(false); setShowVerificationMessage(false); }} className="w-full p-3 bg-blue-600 hover:bg-blue-700 rounded-lg font-bold">Close</button>
                 </div>
             </div>
         );
@@ -244,8 +248,8 @@ function AuthModal({ setShowModal, setShowVerificationMessage, showVerificationM
                      <XCircle />
                  </button>
                 <div className="flex justify-center mb-6">
-                    <button onClick={() => setAuthPage('login')} className={`px-6 py-2 rounded-l-lg text-sm font-bold transition-colors ${authPage === 'login' ? 'bg-red-600 text-white' : 'bg-gray-800 text-gray-300'}`}>LOGIN</button>
-                    <button onClick={() => setAuthPage('signup')} className={`px-6 py-2 rounded-r-lg text-sm font-bold transition-colors ${authPage === 'signup' ? 'bg-red-600 text-white' : 'bg-gray-700 text-gray-300'}`}>SIGN UP</button>
+                    <button onClick={() => setAuthPage('login')} className={`px-6 py-2 rounded-l-lg text-sm font-bold transition-colors ${authPage === 'login' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300'}`}>LOGIN</button>
+                    <button onClick={() => setAuthPage('signup')} className={`px-6 py-2 rounded-r-lg text-sm font-bold transition-colors ${authPage === 'signup' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300'}`}>SIGN UP</button>
                 </div>
                 {authPage === 'login' ? <Login setShowModal={setShowModal} setShowVerificationMessage={setShowVerificationMessage}/> : <SignUp setShowModal={setShowModal} setShowVerificationMessage={setShowVerificationMessage} />}
             </div>
@@ -278,9 +282,9 @@ function Login({ setShowModal, setShowVerificationMessage }) {
         <form onSubmit={handleLogin} className="space-y-4">
             <h2 className="text-2xl font-bold text-center text-gray-200">Welcome Back</h2>
             {error && <p className="text-yellow-400 text-center bg-yellow-900/50 p-2 rounded">{error}</p>}
-            <input type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full p-3 bg-gray-800 rounded-lg border border-gray-700 focus:outline-none focus:ring-2 focus:ring-red-500" required />
-            <input type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full p-3 bg-gray-800 rounded-lg border border-gray-700 focus:outline-none focus:ring-2 focus:ring-red-500" required />
-            <button type="submit" className="w-full p-3 bg-red-600 hover:bg-red-700 rounded-lg font-bold transition-transform hover:scale-105">LOG IN</button>
+            <input type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full p-3 bg-gray-800 rounded-lg border border-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500" required />
+            <input type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full p-3 bg-gray-800 rounded-lg border border-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500" required />
+            <button type="submit" className="w-full p-3 bg-blue-600 hover:bg-blue-700 rounded-lg font-bold transition-transform hover:scale-105">LOG IN</button>
         </form>
     );
 }
@@ -308,15 +312,19 @@ function SignUp({ setShowModal, setShowVerificationMessage }) {
             const newProfile = {
                 uid: user.uid,
                 username: username,
-                games: ['Street Fighter 6', 'Mortal Kombat 1', 'Tekken 8'],
-                wins: 0, losses: 0, threatScore: 1000, coins: 500,
-                bio: 'New challenger looking for an online match!',
+                interests: ['Gaming', 'Movies', 'Music'],
+                influence: 100,
+                bio: 'Excited to connect with new people!',
                 createdAt: serverTimestamp(),
-                avatar: `https://api.dicebear.com/8.x/pixel-art/svg?seed=${user.uid}`
+                avatar: `https://api.dicebear.com/8.x/pixel-art/svg?seed=${user.uid}`,
+                friends: [],
+                friendRequests: [],
+                sentFriendRequests: []
             };
             await setDoc(profileRef, newProfile);
             
             setShowVerificationMessage(true);
+            setShowModal(false);
             
         } catch (err) {
             setError(err.message.replace('Firebase: ', ''));
@@ -324,12 +332,12 @@ function SignUp({ setShowModal, setShowVerificationMessage }) {
     };
      return (
         <form onSubmit={handleSignUp} className="space-y-4">
-            <h2 className="text-2xl font-bold text-center text-gray-200">Join The Fight</h2>
+            <h2 className="text-2xl font-bold text-center text-gray-200">Join ConnectSphere</h2>
             {error && <p className="text-yellow-400 text-center bg-yellow-900/50 p-2 rounded">{error}</p>}
-            <input type="text" placeholder="Username" value={username} onChange={(e) => setUsername(e.target.value)} className="w-full p-3 bg-gray-800 rounded-lg border border-gray-700 focus:outline-none focus:ring-2 focus:ring-red-500" required />
-            <input type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full p-3 bg-gray-800 rounded-lg border border-gray-700 focus:outline-none focus:ring-2 focus:ring-red-500" required />
-            <input type="password" placeholder="Password (min. 6 characters)" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full p-3 bg-gray-800 rounded-lg border border-gray-700 focus:outline-none focus:ring-2 focus:ring-red-500" required />
-            <button type="submit" className="w-full p-3 bg-red-600 hover:bg-red-700 rounded-lg font-bold transition-transform hover:scale-105">CREATE ACCOUNT</button>
+            <input type="text" placeholder="Username" value={username} onChange={(e) => setUsername(e.target.value)} className="w-full p-3 bg-gray-800 rounded-lg border border-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500" required />
+            <input type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full p-3 bg-gray-800 rounded-lg border border-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500" required />
+            <input type="password" placeholder="Password (min. 6 characters)" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full p-3 bg-gray-800 rounded-lg border border-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500" required />
+            <button type="submit" className="w-full p-3 bg-blue-600 hover:bg-blue-700 rounded-lg font-bold transition-transform hover:scale-105">CREATE ACCOUNT</button>
         </form>
     );
 }
@@ -337,10 +345,10 @@ function SignUp({ setShowModal, setShowVerificationMessage }) {
 function AuthWall({ setShowAuthModal, feature }) {
     return (
         <div className="h-full flex flex-col items-center justify-center text-center p-8">
-            <UserPlus className="w-24 h-24 text-red-500 mb-4" />
+            <UserPlus className="w-24 h-24 text-blue-500 mb-4" />
             <h2 className="text-2xl font-bold mb-2">Create an account to continue</h2>
-            <p className="text-gray-400 mb-6 max-w-sm">Sign up to challenge players, track your stats, and access {feature}.</p>
-            <button onClick={() => setShowAuthModal(true)} className="bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-8 rounded-lg transition-transform hover:scale-105">Sign Up / Login</button>
+            <p className="text-gray-400 mb-6 max-w-sm">Sign up to discover new people, post your thoughts, and access {feature}.</p>
+            <button onClick={() => setShowAuthModal(true)} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-lg transition-transform hover:scale-105">Sign Up / Login</button>
         </div>
     );
 }
@@ -349,37 +357,57 @@ function AuthWall({ setShowAuthModal, feature }) {
 
 function CreatePostModal({ profile, setShowCreatePostModal }) {
     const [caption, setCaption] = useState('');
-    const [game, setGame] = useState(profile.games[0] || '');
+    const [imageFile, setImageFile] = useState(null);
+    const [preview, setPreview] = useState(null);
     const [error, setError] = useState('');
     const [isPosting, setIsPosting] = useState(false);
+    const fileInputRef = useRef(null);
+
+    const handleFileChange = (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            setImageFile(file);
+            setPreview(URL.createObjectURL(file));
+        }
+    };
 
     const handlePost = async (e) => {
         e.preventDefault();
-        if (!caption || !game) {
-            setError('Please enter a caption and select a game.');
+        if (!caption) {
+            setError('Please add a caption.');
             return;
         }
+        
         setIsPosting(true);
         setError('');
 
         try {
+            let imageUrl = null;
+            if (imageFile) {
+                const storageRef = ref(storage, `posts/${auth.currentUser.uid}/${Date.now()}_${imageFile.name}`);
+                const snapshot = await uploadBytes(storageRef, imageFile);
+                imageUrl = await getDownloadURL(snapshot.ref);
+            }
+
             const feedCollection = collection(db, `artifacts/${appId}/public/data/feed`);
             await addDoc(feedCollection, {
                 userId: auth.currentUser.uid,
                 username: profile.username,
                 avatar: profile.avatar,
                 caption,
-                game,
-                imageUrl: `https://placehold.co/1080x1920/1a202c/ffffff?text=${encodeURIComponent(caption)}`,
+                imageUrl, 
+                postType: imageFile ? 'image' : 'text',
                 likes: [],
                 likeCount: 0,
                 commentCount: 0,
                 createdAt: serverTimestamp(),
             });
             setShowCreatePostModal(false);
+            toast.success('Post created!');
         } catch (err) {
             console.error("Error creating post:", err);
             setError("Could not create post. Please try again.");
+            toast.error(`Failed to create post: ${err.message}`);
         } finally {
             setIsPosting(false);
         }
@@ -393,19 +421,29 @@ function CreatePostModal({ profile, setShowCreatePostModal }) {
                  </button>
                  <h2 className="text-2xl font-bold text-center text-white mb-4">Create New Post</h2>
                  <form onSubmit={handlePost} className="space-y-4">
+                    <div 
+                        className="w-full h-48 bg-gray-800 rounded-lg border-2 border-dashed border-gray-700 flex items-center justify-center cursor-pointer relative"
+                        onClick={() => fileInputRef.current.click()}
+                    >
+                        {preview ? <img src={preview} alt="preview" className="w-full h-full object-contain rounded-lg"/> : 
+                        <div className="text-center text-gray-500">
+                           <ImageIcon size={48} className="mx-auto"/>
+                           <p>Add a photo (optional)</p>
+                        </div>
+                        }
+                    </div>
+                    <input type="file" accept="image/*" ref={fileInputRef} onChange={handleFileChange} className="hidden" />
+
                     <textarea 
-                        placeholder="What's on your mind, champ?" 
+                        placeholder="Write a caption..." 
                         value={caption} 
                         onChange={(e) => setCaption(e.target.value)}
-                        className="w-full p-3 h-32 bg-gray-800 rounded-lg border border-gray-700 focus:outline-none focus:ring-2 focus:ring-red-500 resize-none" 
+                        className="w-full p-3 h-24 bg-gray-800 rounded-lg border border-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" 
                         required 
                     />
-                    <select value={game} onChange={(e) => setGame(e.target.value)} className="w-full p-3 bg-gray-800 rounded-lg border border-gray-700 focus:outline-none focus:ring-2 focus:ring-red-500">
-                        {profile.games && profile.games.map(g => <option key={g} value={g}>{g}</option>)}
-                    </select>
                     {error && <p className="text-yellow-400 text-center">{error}</p>}
-                    <button type="submit" disabled={isPosting} className="w-full p-3 bg-red-600 hover:bg-red-700 rounded-lg font-bold transition-all disabled:bg-gray-600 disabled:cursor-not-allowed">
-                        {isPosting ? 'Posting...' : 'Post to Feed'}
+                    <button type="submit" disabled={isPosting} className="w-full p-3 bg-blue-600 hover:bg-blue-700 rounded-lg font-bold transition-all disabled:bg-gray-600 disabled:cursor-not-allowed">
+                        {isPosting ? 'Posting...' : 'Post'}
                     </button>
                  </form>
             </div>
@@ -475,7 +513,7 @@ function CommentModal({ postId, setShowCommentModal }) {
                             <div key={comment.id} className="flex items-start gap-3">
                                 <img src={comment.avatar} alt={comment.username} className="w-10 h-10 rounded-full bg-gray-700" />
                                 <div className="bg-gray-800 rounded-lg p-3 flex-1">
-                                    <p className="font-bold text-sm text-red-400">@{comment.username}</p>
+                                    <p className="font-bold text-sm text-blue-400">@{comment.username}</p>
                                     <p className="text-white">{comment.text}</p>
                                 </div>
                             </div>
@@ -488,17 +526,16 @@ function CommentModal({ postId, setShowCommentModal }) {
                         value={newComment}
                         onChange={e => setNewComment(e.target.value)}
                         placeholder="Add a comment..."
-                        className="flex-1 p-3 bg-gray-800 rounded-lg border border-gray-700 focus:outline-none focus:ring-2 focus:ring-red-500"
+                        className="flex-1 p-3 bg-gray-800 rounded-lg border border-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
-                    <button type="submit" className="p-3 bg-red-600 hover:bg-red-700 rounded-lg font-bold">Post</button>
+                    <button type="submit" className="p-3 bg-blue-600 hover:bg-blue-700 rounded-lg font-bold">Post</button>
                 </form>
             </div>
         </div>
     )
 }
 
-
-function FightFeed({ user, profile, setShowAuthModal }) {
+function FeedPage({ user, profile, setShowAuthModal }) {
     const [feedItems, setFeedItems] = useState([]);
     const [loading, setLoading] = useState(true);
     const [showCreatePostModal, setShowCreatePostModal] = useState(false);
@@ -549,27 +586,33 @@ function FightFeed({ user, profile, setShowAuthModal }) {
 
     return (
         <div className="h-full w-full relative">
-             <div className="h-full w-full overflow-y-scroll snap-y snap-mandatory scroll-smooth">
+             <div className="h-full w-full overflow-y-auto snap-y snap-mandatory scroll-smooth">
                 {feedItems.length === 0 && (
                     <div className="h-full w-full snap-start flex flex-col items-center justify-center text-center p-4">
                         <h2 className="text-2xl font-bold">The Feed is Quiet...</h2>
-                        <p className="text-gray-400 mt-2">Be the first to post a highlight!</p>
+                        <p className="text-gray-400 mt-2">Be the first to post something!</p>
                     </div>
                 )}
                 {feedItems.map(item => {
                     const hasLiked = user && item.likes && item.likes.includes(user.uid);
                     return (
-                        <div key={item.id} className="h-full w-full snap-start flex-shrink-0 relative flex items-end justify-center">
-                            <img src={item.imageUrl} onError={(e) => e.target.src='https://placehold.co/1080x1920/000000/ffffff?text=Error'} alt={item.caption} className="absolute top-0 left-0 w-full h-full object-cover z-0" />
+                        <div key={item.id} className="h-full w-full snap-start flex-shrink-0 relative flex items-end justify-center bg-gray-900">
+                           {item.postType === 'image' ? (
+                             <img src={item.imageUrl} onError={(e) => e.target.src='https://placehold.co/1080x1920/000000/ffffff?text=Error'} alt={item.caption} className="absolute top-0 left-0 w-full h-full object-contain z-0" />
+                           ) : (
+                               <div className="absolute inset-0 bg-gradient-to-br from-blue-800 to-purple-800 flex items-center justify-center p-8">
+                                   <p className="text-white text-3xl font-bold text-center">{item.caption}</p>
+                               </div>
+                           )}
+
                             <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-t from-black/70 via-black/20 to-transparent z-10"></div>
-                            <div className="z-20 w-full flex items-end p-4 text-white">
+                            <div className="z-20 w-full flex items-end p-4 pb-24 sm:pb-28 text-white">
                                 <div className="flex-1">
                                     <div className="flex items-center gap-3 mb-2">
                                         <img src={item.avatar} alt={item.username} className="w-12 h-12 rounded-full border-2 border-white bg-gray-700 object-cover" />
                                         <p className="font-bold text-lg">@{item.username}</p>
                                     </div>
                                     <p className="text-sm mb-2">{item.caption}</p>
-                                    <p className="text-xs text-red-400 font-bold">{item.game}</p>
                                 </div>
                                 <div className="flex flex-col items-center gap-5">
                                     <button onClick={() => handleLike(item.id, item.likes || [])} className="flex flex-col items-center gap-1">
@@ -587,7 +630,7 @@ function FightFeed({ user, profile, setShowAuthModal }) {
                     )
                 })}
             </div>
-            <button onClick={handleCreatePostClick} className="absolute bottom-24 sm:bottom-28 right-4 bg-red-600 p-3 rounded-full shadow-lg z-30 hover:bg-red-700 transition-colors">
+            <button onClick={handleCreatePostClick} className="absolute top-4 right-4 bg-blue-600 p-3 rounded-full shadow-lg z-30 hover:bg-blue-700 transition-colors">
                 <PlusCircle />
             </button>
             {showCreatePostModal && <CreatePostModal profile={profile} setShowCreatePostModal={setShowCreatePostModal} />}
@@ -596,7 +639,7 @@ function FightFeed({ user, profile, setShowAuthModal }) {
     );
 }
 
-function Matchmaking({ user, profile }) {
+function DiscoverPage({ user, profile }) {
     const [challengers, setChallengers] = useState([]);
     const [loading, setLoading] = useState(true);
 
@@ -606,8 +649,13 @@ function Matchmaking({ user, profile }) {
         const usersCol = collection(db, `artifacts/${appId}/users`);
         const usersSnapshot = await getDocs(usersCol);
         const challengerData = [];
+        const myProfileSnap = await getDoc(doc(db, `artifacts/${appId}/users`, user.uid));
+        const myProfile = myProfileSnap.data();
+        const sentRequests = myProfile.sentFriendRequests || [];
+        const friends = myProfile.friends || [];
+
         for (const userDoc of usersSnapshot.docs) {
-             if (userDoc.id !== user.uid) {
+             if (userDoc.id !== user.uid && !sentRequests.includes(userDoc.id) && !friends.includes(userDoc.id)) {
                 challengerData.push({ id: userDoc.id, ...userDoc.data() });
             }
         }
@@ -619,21 +667,27 @@ function Matchmaking({ user, profile }) {
         fetchChallengers();
     }, [fetchChallengers]);
 
-    const handleSwipe = async (challengedUser, liked) => {
+    const handleSwipe = async (otherUser, liked) => {
         if (liked) {
-            toast.success(`You challenged ${challengedUser.username}!`);
-            const challengeRef = collection(db, 'challenges');
-            await addDoc(challengeRef, {
-                from: { uid: user.uid, username: profile.username, avatar: profile.avatar },
-                to: { uid: challengedUser.id, username: challengedUser.username, avatar: challengedUser.avatar },
-                status: 'pending',
-                createdAt: serverTimestamp()
+            toast.success(`Sent friend request to ${otherUser.username}!`);
+            const theirProfileRef = doc(db, `artifacts/${appId}/users`, otherUser.id);
+            await updateDoc(theirProfileRef, {
+                friendRequests: arrayUnion({
+                    uid: user.uid,
+                    username: profile.username,
+                    avatar: profile.avatar
+                })
             });
+
+             const myProfileRef = doc(db, `artifacts/${appId}/users`, user.uid);
+             await updateDoc(myProfileRef, {
+                 sentFriendRequests: arrayUnion(otherUser.id)
+             });
         }
-        setChallengers(prev => prev.filter(c => c.id !== challengedUser.id));
+        setChallengers(prev => prev.filter(c => c.id !== otherUser.id));
     };
     
-    if (loading) return <div className="h-full flex items-center justify-center"><p>Searching for eSports challengers...</p></div>;
+    if (loading) return <div className="h-full flex items-center justify-center"><p>Finding people...</p></div>;
     
     return (
         <div className="h-full flex flex-col items-center justify-center p-4 bg-gray-900 overflow-hidden">
@@ -649,7 +703,7 @@ function Matchmaking({ user, profile }) {
                                     style={{ zIndex: index }}
                                     initial={{ scale: 1 - (challengers.length - 1 - index) * 0.05, y: (challengers.length - 1 - index) * -10, opacity: 1}}
                                     animate={{ scale: 1, y: 0, opacity: 1 }}
-                                    exit={{ x: 300, opacity: 0, transition: {duration: 0.3} }}
+                                    exit={{ x: 300, opacity: 0, transition: {duration: 0.2} }}
                                     transition={{ duration: 0.3 }}
                                     drag="x"
                                     dragConstraints={{ left: 0, right: 0, top: 0, bottom: 0 }}
@@ -666,9 +720,9 @@ function Matchmaking({ user, profile }) {
                                         <div className="flex flex-col items-center">
                                         <img src={challenger.avatar} className="w-24 h-24 rounded-full border-4 border-gray-900 -mt-16 bg-gray-700 object-cover" alt={`${challenger.username} avatar`}/>
                                         <h2 className="text-3xl font-bold mt-2">{challenger.username}</h2>
-                                        <p className="text-red-400">Threat Score: {challenger.threatScore}</p>
+                                        <p className="text-blue-400">Influence: {challenger.influence}</p>
                                         <div className="mt-4 flex flex-wrap justify-center gap-2">
-                                            {challenger.games && challenger.games.slice(0, 3).map(game => <span key={game} className="bg-gray-700 text-xs px-2 py-1 rounded-full">{game}</span>)}
+                                            {challenger.interests && challenger.interests.slice(0, 3).map(interest => <span key={interest} className="bg-gray-700 text-xs px-2 py-1 rounded-full">{interest}</span>)}
                                         </div>
                                         </div>
                                          {isTopCard && (
@@ -685,8 +739,8 @@ function Matchmaking({ user, profile }) {
                 ) : (
                      <div className="h-full w-full flex flex-col items-center justify-center text-center p-8">
                         <SkipBack className="w-24 h-24 text-gray-600 mb-4"/>
-                        <h2 className="text-2xl font-bold mb-2">No challengers found</h2>
-                        <p className="text-gray-400 mb-6 max-w-sm">There's no one available to match with right now. Try again later!</p>
+                        <h2 className="text-2xl font-bold mb-2">That's everyone!</h2>
+                        <p className="text-gray-400 mb-6 max-w-sm">You've seen all the profiles. Check back later for new people.</p>
                     </div>
                 )}
             </div>
@@ -694,7 +748,7 @@ function Matchmaking({ user, profile }) {
     );
 }
 
-function Leaderboard() {
+function LeaderboardPage() {
     const [players, setPlayers] = useState([]);
     const [loading, setLoading] = useState(true);
 
@@ -702,7 +756,7 @@ function Leaderboard() {
         const usersCol = collection(db, `artifacts/${appId}/users`);
         const unsubscribe = onSnapshot(query(usersCol), (snapshot) => {
             const playerData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            playerData.sort((a, b) => (b.threatScore || 0) - (a.threatScore || 0));
+            playerData.sort((a, b) => (b.influence || 0) - (a.influence || 0));
             setPlayers(playerData);
             setLoading(false);
         });
@@ -713,7 +767,7 @@ function Leaderboard() {
 
     return (
         <div className="p-4 pt-8 h-full overflow-y-auto">
-            <h2 className="text-3xl font-bold text-red-500 mb-6 flex items-center gap-2"><Crown /> Global Leaderboard</h2>
+            <h2 className="text-3xl font-bold text-blue-500 mb-6 flex items-center gap-2"><Crown /> Global Leaderboard</h2>
             <div className="space-y-2">
                  {players.length === 0 && <p className="text-center text-gray-500">The leaderboard is empty. Be the first to make your mark!</p>}
                 {players.map((player, index) => (
@@ -722,11 +776,11 @@ function Leaderboard() {
                         <img src={player.avatar} alt={player.username} className="w-12 h-12 rounded-full bg-gray-700 object-cover"/>
                         <div className="flex-1">
                             <p className="font-bold">{player.username}</p>
-                            <p className="text-sm text-green-400">Wins: {player.wins || 0} / Losses: {player.losses || 0}</p>
+                            <p className="text-sm text-gray-400">{player.bio}</p>
                         </div>
                         <div className="text-right">
-                           <p className="text-lg font-bold text-red-400">{player.threatScore || 0}</p>
-                           <p className="text-xs text-gray-500">Threat Score</p>
+                           <p className="text-lg font-bold text-blue-400">{player.influence || 0}</p>
+                           <p className="text-xs text-gray-500">Influence</p>
                         </div>
                     </div>
                 ))}
@@ -770,12 +824,6 @@ function Profile({ user, profile, setProfile, handleLogout }) {
         toast.success('Profile updated!');
     };
 
-    const winRate = useMemo(() => {
-        if (!profile || typeof profile.wins === 'undefined' || typeof profile.losses === 'undefined') return "0.0";
-        const totalGames = profile.wins + profile.losses;
-        return totalGames > 0 ? ((profile.wins / totalGames) * 100).toFixed(1) : "0.0";
-    }, [profile]);
-
     if (!profile) return <LoadingScreen />;
 
     return (
@@ -783,21 +831,14 @@ function Profile({ user, profile, setProfile, handleLogout }) {
             <div className="bg-gray-800/80 rounded-lg shadow-2xl p-6 max-w-3xl mx-auto">
                 <div className="flex justify-between items-start mb-6">
                      <div className="flex items-center gap-4">
-                         <img src={profile.avatar} alt={profile.username} className="w-20 h-20 rounded-full bg-gray-700 border-2 border-red-500 object-cover"/>
+                         <img src={profile.avatar} alt={profile.username} className="w-20 h-20 rounded-full bg-gray-700 border-2 border-blue-500 object-cover"/>
                          <div>
                             {isEditing ? <input type="text" value={editData.username} onChange={e => setEditData({...editData, username: e.target.value})} className="text-2xl font-bold bg-gray-700 p-2 rounded-lg text-white"/>
                                        : <h2 className="text-2xl font-bold">{profile.username}</h2> }
                             <p className="text-gray-400">UID: {user?.uid.substring(0,10)}...</p>
                          </div>
                      </div>
-                     <button onClick={() => isEditing ? handleSave() : setIsEditing(true)} className="bg-gray-700 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-lg text-sm">{isEditing ? 'Save' : 'Edit'}</button>
-                </div>
-
-                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center my-8">
-                    <div className="bg-gray-700/50 p-4 rounded-lg"><p className="text-2xl font-bold text-green-400">{profile.wins || 0}</p><p className="text-sm text-gray-400">Wins</p></div>
-                    <div className="bg-gray-700/50 p-4 rounded-lg"><p className="text-2xl font-bold text-red-400">{profile.losses || 0}</p><p className="text-sm text-gray-400">Losses</p></div>
-                    <div className="bg-gray-700/50 p-4 rounded-lg"><p className="text-2xl font-bold text-blue-400">{winRate}%</p><p className="text-sm text-gray-400">Win Rate</p></div>
-                    <div className="bg-gray-700/50 p-4 rounded-lg"><p className="text-2xl font-bold text-yellow-400">{profile.coins || 0}</p><p className="text-sm text-gray-400">Coins</p></div>
+                     <button onClick={() => isEditing ? handleSave() : setIsEditing(true)} className="bg-gray-700 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg text-sm">{isEditing ? 'Save' : 'Edit'}</button>
                 </div>
 
                 <div className="space-y-4 my-8">
@@ -807,10 +848,10 @@ function Profile({ user, profile, setProfile, handleLogout }) {
                 </div>
 
                  <div className="space-y-4 my-8">
-                    <h3 className="text-lg font-semibold mb-2">Gamer Profiles</h3>
+                    <h3 className="text-lg font-semibold mb-2">Socials</h3>
                     {isEditing ? (
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                             <input type="text" placeholder="PSN/Xbox ID" value={editData.onlineId || ''} onChange={e => setEditData({...editData, onlineId: e.target.value})} className="bg-gray-700 p-2 rounded-lg text-white"/>
+                             <input type="text" placeholder="Gamer ID" value={editData.onlineId || ''} onChange={e => setEditData({...editData, onlineId: e.target.value})} className="bg-gray-700 p-2 rounded-lg text-white"/>
                              <input type="text" placeholder="Twitch Username" value={editData.twitch || ''} onChange={e => setEditData({...editData, twitch: e.target.value})} className="bg-gray-700 p-2 rounded-lg text-white"/>
                              <input type="text" placeholder="YouTube Handle" value={editData.youtube || ''} onChange={e => setEditData({...editData, youtube: e.target.value})} className="bg-gray-700 p-2 rounded-lg text-white"/>
                         </div>
@@ -864,8 +905,6 @@ function AdminPanel() {
         if (confirm(`Are you sure you want to permanently delete user ${userIdToDelete}? This action cannot be undone.`)) {
             try {
                 // This is a placeholder for a real Cloud Function call.
-                // In a production app, never allow clients to delete arbitrary documents.
-                // You would trigger a Cloud Function that verifies admin privileges before deleting.
                 const userDocRef = doc(db, `artifacts/${appId}/users`, userIdToDelete);
                 await deleteDoc(userDocRef);
                 toast.success(`User ${userIdToDelete} data deleted.`);
@@ -901,18 +940,19 @@ function AdminPanel() {
     );
 }
 
-// --- Challenges & Chat Components ---
+// --- Alerts & Chat Components ---
 
-function ChallengesPage({ user, setActiveChat }) {
-    const [incoming, setIncoming] = useState([]);
+function AlertsPage({ user, profile, setActiveChat }) {
+    const [friendRequests, setFriendRequests] = useState([]);
     const [matches, setMatches] = useState([]);
-    const [view, setView] = useState('challenges'); // challenges, matches
+    const [view, setView] = useState('requests');
 
     useEffect(() => {
-        const challengesRef = collection(db, 'challenges');
-        const q = query(challengesRef, where('to.uid', '==', user.uid), where('status', '==', 'pending'));
-        const unsubscribe = onSnapshot(q, snapshot => {
-            setIncoming(snapshot.docs.map(doc => ({id: doc.id, ...doc.data()})));
+        const profileRef = doc(db, `artifacts/${appId}/users`, user.uid);
+        const unsubscribe = onSnapshot(profileRef, (doc) => {
+            if (doc.exists()) {
+                setFriendRequests(doc.data().friendRequests || []);
+            }
         });
         return unsubscribe;
     }, [user.uid]);
@@ -927,50 +967,54 @@ function ChallengesPage({ user, setActiveChat }) {
         return unsubscribe;
     }, [user.uid]);
 
-    const handleAccept = async (challenge) => {
+    const handleAccept = async (request) => {
         const batch = writeBatch(db);
+        
+        const currentUserRef = doc(db, `artifacts/${appId}/users`, user.uid);
+        batch.update(currentUserRef, { friends: arrayUnion(request.uid), friendRequests: arrayRemove(request) });
+        
+        const otherUserRef = doc(db, `artifacts/${appId}/users`, request.uid);
+        batch.update(otherUserRef, { friends: arrayUnion(user.uid) });
 
-        // Create a new match document
         const matchRef = doc(collection(db, 'matches'));
         batch.set(matchRef, {
-            users: [challenge.from.uid, challenge.to.uid],
-            userDetails: [challenge.from, challenge.to],
+            users: [user.uid, request.uid],
+            userDetails: [ { uid: user.uid, username: profile.username, avatar: profile.avatar }, request],
             createdAt: serverTimestamp(),
-            lastMessage: 'Match accepted! Say hello.'
+            lastMessage: 'You are now friends! Say hello.'
         });
 
-        // Delete the challenge document
-        const challengeRef = doc(db, 'challenges', challenge.id);
-        batch.delete(challengeRef);
-
         await batch.commit();
-        toast.success(`Match accepted with ${challenge.from.username}!`);
+        toast.success(`You are now friends with ${request.username}!`);
     };
 
-    const handleDecline = async (challengeId) => {
-        await deleteDoc(doc(db, 'challenges', challengeId));
-        toast.error('Challenge declined.');
+    const handleDecline = async (request) => {
+        const currentUserRef = doc(db, `artifacts/${appId}/users`, user.uid);
+        await updateDoc(currentUserRef, {
+             friendRequests: arrayRemove(request)
+        });
+        toast.error('Friend request declined.');
     };
 
     return (
         <div className="p-4 pt-8 h-full overflow-y-auto">
             <div className="flex border-b border-gray-700 mb-4">
-                <button onClick={() => setView('challenges')} className={`py-2 px-4 font-bold ${view === 'challenges' ? 'text-red-500 border-b-2 border-red-500' : 'text-gray-400'}`}>Incoming Challenges</button>
-                <button onClick={() => setView('matches')} className={`py-2 px-4 font-bold ${view === 'matches' ? 'text-red-500 border-b-2 border-red-500' : 'text-gray-400'}`}>Matches</button>
+                <button onClick={() => setView('requests')} className={`py-2 px-4 font-bold ${view === 'requests' ? 'text-blue-500 border-b-2 border-blue-500' : 'text-gray-400'}`}>Friend Requests</button>
+                <button onClick={() => setView('matches')} className={`py-2 px-4 font-bold ${view === 'matches' ? 'text-blue-500 border-b-2 border-blue-500' : 'text-gray-400'}`}>Chats</button>
             </div>
 
-            {view === 'challenges' && (
+            {view === 'requests' && (
                 <div className="space-y-3">
-                    {incoming.length === 0 && <p className="text-center text-gray-500 mt-8">No new challenges.</p>}
-                    {incoming.map(challenge => (
-                        <div key={challenge.id} className="bg-gray-800 p-4 rounded-lg flex items-center justify-between">
+                    {friendRequests.length === 0 && <p className="text-center text-gray-500 mt-8">No new friend requests.</p>}
+                    {friendRequests.map(request => (
+                        <div key={request.uid} className="bg-gray-800 p-4 rounded-lg flex items-center justify-between">
                             <div className="flex items-center gap-3">
-                                <img src={challenge.from.avatar} alt={challenge.from.username} className="w-12 h-12 rounded-full"/>
-                                <p><span className="font-bold">{challenge.from.username}</span> challenged you!</p>
+                                <img src={request.avatar} alt={request.username} className="w-12 h-12 rounded-full"/>
+                                <p><span className="font-bold">{request.username}</span> wants to connect!</p>
                             </div>
                             <div className="flex gap-2">
-                                <button onClick={() => handleAccept(challenge)} className="bg-green-600 hover:bg-green-700 px-3 py-1 rounded text-sm font-bold">Accept</button>
-                                <button onClick={() => handleDecline(challenge.id)} className="bg-red-600 hover:bg-red-700 px-3 py-1 rounded text-sm font-bold">Decline</button>
+                                <button onClick={() => handleAccept(request)} className="bg-green-600 hover:bg-green-700 px-3 py-1 rounded text-sm font-bold">Accept</button>
+                                <button onClick={() => handleDecline(request)} className="bg-red-600 hover:bg-red-700 px-3 py-1 rounded text-sm font-bold">Decline</button>
                             </div>
                         </div>
                     ))}
@@ -979,7 +1023,7 @@ function ChallengesPage({ user, setActiveChat }) {
 
             {view === 'matches' && (
                  <div className="space-y-3">
-                    {matches.length === 0 && <p className="text-center text-gray-500 mt-8">You have no matches yet. Go challenge some players!</p>}
+                    {matches.length === 0 && <p className="text-center text-gray-500 mt-8">You have no chats yet. Connect with people to start talking!</p>}
                     {matches.map(match => {
                         const opponent = match.userDetails.find(u => u.uid !== user.uid);
                         return (
@@ -1043,12 +1087,18 @@ function ChatScreen({ match, user, onClose }) {
                     <XCircle />
                 </button>
                 <img src={match.opponent.avatar} alt={match.opponent.username} className="w-10 h-10 rounded-full" />
-                <h2 className="font-bold text-lg">{match.opponent.username}</h2>
+                <div className="flex-1">
+                    <h2 className="font-bold text-lg">{match.opponent.username}</h2>
+                </div>
+                 <div className="flex gap-4">
+                    <button onClick={() => toast('Voice call feature coming soon!')} className="text-gray-400 hover:text-white"><Phone /></button>
+                    <button onClick={() => toast('Video call feature coming soon!')} className="text-gray-400 hover:text-white"><Video /></button>
+                </div>
             </header>
             <div className="flex-1 p-4 overflow-y-auto space-y-4">
                 {messages.map((msg, index) => (
                     <div key={index} className={`flex gap-3 ${msg.senderId === user.uid ? 'justify-end' : 'justify-start'}`}>
-                       <div className={`max-w-xs md:max-w-md p-3 rounded-2xl ${msg.senderId === user.uid ? 'bg-red-600 rounded-br-none' : 'bg-gray-700 rounded-bl-none'}`}>
+                       <div className={`max-w-xs md:max-w-md p-3 rounded-2xl ${msg.senderId === user.uid ? 'bg-blue-600 rounded-br-none' : 'bg-gray-700 rounded-bl-none'}`}>
                            <p>{msg.text}</p>
                        </div>
                     </div>
@@ -1061,21 +1111,138 @@ function ChatScreen({ match, user, onClose }) {
                     value={newMessage}
                     onChange={e => setNewMessage(e.target.value)}
                     placeholder="Type your message..."
-                    className="flex-1 p-3 bg-gray-800 rounded-lg border border-gray-700 focus:outline-none focus:ring-2 focus:ring-red-500"
+                    className="flex-1 p-3 bg-gray-800 rounded-lg border border-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
-                <button type="submit" className="p-3 bg-red-600 hover:bg-red-700 rounded-lg font-bold"><Send /></button>
+                <button type="submit" className="p-3 bg-blue-600 hover:bg-blue-700 rounded-lg font-bold"><Send /></button>
             </form>
         </div>
     )
 }
+
+function GroupsPage({ user, profile, setShowAuthModal }) {
+    const [lfgPosts, setLfgPosts] = useState([]);
+    const [showCreateLfg, setShowCreateLfg] = useState(false);
+
+    useEffect(() => {
+        const lfgCol = collection(db, `artifacts/${appId}/public/data/lfg`);
+        const q = query(lfgCol, orderBy('createdAt', 'desc'));
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            setLfgPosts(snapshot.docs.map(doc => ({id: doc.id, ...doc.data()})))
+        });
+        return () => unsubscribe;
+    }, []);
+
+    const handleJoin = () => {
+        if (user.isAnonymous) {
+            setShowAuthModal(true);
+        } else {
+            toast.success("Joined group!");
+        }
+    }
+
+    return (
+        <div className="p-4 pt-8 h-full flex flex-col">
+             <div className="flex justify-between items-center mb-6">
+                <h2 className="text-3xl font-bold text-blue-500 flex items-center gap-2"><Users /> Looking For Group</h2>
+                <button onClick={() => user.isAnonymous ? setShowAuthModal(true) : setShowCreateLfg(true)} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg flex items-center gap-2">
+                    <PlusCircle size={20}/> Create Post
+                </button>
+            </div>
+            <div className="flex-1 overflow-y-auto space-y-3">
+                {lfgPosts.length === 0 && <p className="text-center text-gray-500 mt-8">No one is looking for a group. Create the first post!</p>}
+                {lfgPosts.map(post => (
+                    <div key={post.id} className="bg-gray-800 p-4 rounded-lg">
+                        <div className="flex items-start gap-4">
+                            <img src={post.author.avatar} alt={post.author.username} className="w-12 h-12 rounded-full"/>
+                            <div className="flex-1">
+                                <p className="font-bold text-blue-400">{post.interests ? post.interests.join(', ') : 'General'}</p>
+                                <p className="text-white my-2">{post.description}</p>
+                                <div className="text-xs text-gray-400 flex items-center justify-between">
+                                    <p>By @{post.author.username}</p>
+                                    <p>{post.createdAt ? formatDistanceToNow(post.createdAt.toDate()) : ''} ago</p>
+                                </div>
+                            </div>
+                             <button onClick={handleJoin} className="bg-green-600 hover:bg-green-700 px-3 py-1 rounded text-sm font-bold">Join</button>
+                        </div>
+                    </div>
+                ))}
+            </div>
+             {showCreateLfg && <CreateLFGModal profile={profile} onClose={() => setShowCreateLfg(false)} />}
+        </div>
+    )
+}
+
+function CreateLFGModal({ profile, onClose }) {
+    const [description, setDescription] = useState('');
+    const [interests, setInterests] = useState([]);
+    const [error, setError] = useState('');
+    const [isPosting, setIsPosting] = useState(false);
+
+    const handlePost = async (e) => {
+        e.preventDefault();
+        if (!description || interests.length === 0) {
+            setError('Please provide all details.');
+            return;
+        }
+        setIsPosting(true);
+        try {
+            const lfgCol = collection(db, `artifacts/${appId}/public/data/lfg`);
+            await addDoc(lfgCol, {
+                author: {
+                    uid: profile.uid,
+                    username: profile.username,
+                    avatar: profile.avatar
+                },
+                description,
+                interests,
+                createdAt: serverTimestamp()
+            });
+            onClose();
+            toast.success("LFG post created!");
+        } catch (err) {
+            console.error(err);
+            setError("Failed to create post.");
+        } finally {
+            setIsPosting(false);
+        }
+    };
+    
+    return (
+         <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
+            <div className="bg-gray-900 border border-gray-700 p-6 rounded-2xl shadow-2xl w-full max-w-md relative">
+                 <button onClick={onClose} className="absolute top-3 right-3 text-gray-500 hover:text-white">
+                     <XCircle />
+                 </button>
+                 <h2 className="text-2xl font-bold text-center text-white mb-4">Create LFG Post</h2>
+                 <form onSubmit={handlePost} className="space-y-4">
+                     <select multiple value={interests} onChange={(e) => setInterests(Array.from(e.target.selectedOptions, option => option.value))} className="w-full p-3 bg-gray-800 rounded-lg border border-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        {profile.interests && profile.interests.map(g => <option key={g} value={g}>{g}</option>)}
+                    </select>
+                    <textarea 
+                        placeholder="Describe what you're looking for... e.g., 'Anyone want to catch a movie tonight?'" 
+                        value={description} 
+                        onChange={(e) => setDescription(e.target.value)}
+                        className="w-full p-3 h-24 bg-gray-800 rounded-lg border border-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" 
+                        required 
+                    />
+                    {error && <p className="text-yellow-400 text-center">{error}</p>}
+                    <button type="submit" disabled={isPosting} className="w-full p-3 bg-blue-600 hover:bg-blue-700 rounded-lg font-bold transition-all disabled:bg-gray-600 disabled:cursor-not-allowed">
+                        {isPosting ? 'Posting...' : 'Create LFG Post'}
+                    </button>
+                 </form>
+            </div>
+        </div>
+    )
+}
+
 
 // --- Utility Components ---
 function LoadingScreen() {
     return (
         <div className="flex items-center justify-center h-screen bg-black">
             <div className="text-center">
-                <Swords className="h-16 w-16 text-red-500 animate-pulse mx-auto" />
-                <h2 className="text-2xl font-bold text-white mt-4 tracking-widest">LOADING...</h2>
+                <Swords className="h-16 w-16 text-blue-500 animate-pulse mx-auto" />
+                <h2 className="text-2xl font-bold text-white mt-4 tracking-widest">CONNECTING...</h2>
             </div>
         </div>
     );
